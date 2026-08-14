@@ -8,8 +8,5 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Compile
-        run: |
-          echo "Starting full build..."
-          # 这里会自动调用 scripts/ 里的编译脚本
-          # 包含你要求的 daed, passwall, istore 等
+      - name: Build
+        run: echo "Starting build..."

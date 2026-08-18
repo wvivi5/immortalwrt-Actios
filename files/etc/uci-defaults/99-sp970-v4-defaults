@@ -1,0 +1,30 @@
+#!/bin/sh
+# SP970 v4: obtain IPv6 on the upstream Wi-Fi link only.
+# Do not delegate IPv6, RA, DHCPv6, or NDP to downstream LAN clients.
+
+uci -q set network.wan6='interface'
+uci -q set network.wan6.device='phy0-sta0'
+uci -q set network.wan6.proto='dhcpv6'
+uci -q set network.wan6.reqaddress='try'
+uci -q set network.wan6.reqprefix='no'
+uci -q set network.wan6.norelease='1'
+uci -q set network.wan6.delegate='0'
+uci -q delete network.lan.ip6assign
+
+uci -q set dhcp.lan.ra='disabled'
+uci -q set dhcp.lan.dhcpv6='disabled'
+uci -q set dhcp.lan.ndp='disabled'
+
+# Default USB role: connect to a computer as a USB network gadget.
+uci -q set gc.config.mode='gadget'
+uci -q set gc.config.enabled='1'
+
+uci commit network
+uci commit dhcp
+uci commit gc
+
+# Reload after all related UCI changes are committed.
+/etc/init.d/network reload >/dev/null 2>&1 || true
+/etc/init.d/gc restart >/dev/null 2>&1 || true
+
+exit 0

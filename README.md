@@ -8,6 +8,84 @@
 - 支持自定义输入插件包，驱动包，主题包，python包，perl包，lib包，等等。
 ---
 
+## daed 大鹅运行环境说明
+
+本项目的 `sp970v11` 第四版配置，针对 SP970V3（2号随身 WiFi）实际运行 daed、Docker 和外置 MT7601 的需求进行了适配。daed 不是只安装 LuCI 插件就能运行，内核和流量入口也必须匹配。
+
+### 必需的内核环境
+
+以下选项是 daed eBPF/CO-RE 和透明代理策略路由的关键依赖：
+
+```text
+# CONFIG_KERNEL_DEBUG_INFO_REDUCED is not set
+CONFIG_KERNEL_DEBUG_INFO=y
+CONFIG_KERNEL_DEBUG_INFO_BTF=y
+CONFIG_KERNEL_BPF_EVENTS=y
+CONFIG_KERNEL_XDP_SOCKETS=y
+CONFIG_KERNEL_IP_ADVANCED_ROUTER=y
+CONFIG_KERNEL_IP_MULTIPLE_TABLES=y
+```
+
+同时需要编译以下相关软件包和内核模块：
+
+```text
+daed luci-app-daed daed-geoip daed-geosite
+kmod-sched-core kmod-sched-bpf kmod-tun kmod-veth kmod-br-netfilter
+```
+
+`CONFIG_KERNEL_DEBUG_INFO_BTF=y` 与 `CONFIG_KERNEL_DEBUG_INFO_REDUCED=y` 互斥。普通调试功能可以继续关闭，但不能为了缩小固件而关闭 BTF，否则 daed 可能启动失败或无法加载 eBPF 程序。
+
+### Docker 透明代理
+
+第四版包含 Docker、Dockerd、Docker Compose、Dockerman、`kmod-veth` 和 `kmod-br-netfilter`。要让普通 Docker bridge 容器经过 daed：
+
+1. 打开 daed 的接口设置；
+2. 在 LAN/代理入口接口中加入 `docker0`，例如：
+
+   ```text
+   br-lan,docker0
+   ```
+
+3. WAN 出口选择实际联网接口，例如 `phy0-sta0`；
+4. 保存配置并重启 daed；
+5. 用容器实际访问外网验证，不要只看 daed 页面显示为运行中。
+
+默认 Docker bridge 网段通常是 `172.17.0.0/16`。如果使用自定义 Docker 网络，还要把对应的 `br-xxxx` 接口加入 daed 入口。使用 `host` 网络模式的容器与宿主机共用网络命名空间，不经过 `docker0`。
+
+### MT7601 外置无线
+
+第四版加入了 `kmod-mt7601u` 和 `mt7601u-firmware`。它用于绕过 SP970 内置 `wcn36xx` 在 AP 模式下可能出现的下行速率锁死问题。
+
+实测经验：MT7601 USB 无线棒用延长线移开约 20 厘米后，射频干扰明显降低；手机连接外置热点时协商速率约为 65～72 Mbit/s，YouTube 1080p 播放稳定，实际下载速度最高约 1 MB/s。建议保持这个距离，不要把无线棒紧贴设备本体、USB 接口或主板。
+
+### 验证命令
+
+设备启动后可以检查 daed 和内核环境：
+
+```sh
+logread | grep -i daed
+daed --version
+test -e /sys/kernel/btf/vmlinux && echo "BTF: OK"
+lsmod | grep -E 'sched_bpf|tun|veth|br_netfilter|mt7601u'
+iw dev
+```
+
+验证 Docker 容器流量时，可以使用一个临时容器测试：
+
+```sh
+docker run --rm alpine wget -qO- https://www.google.com
+```
+
+如果 daed 能启动但容器不走代理，优先检查 `docker0` 是否加入入口接口、策略路由是否存在，以及容器 DNS 是否正常。
+
+本版使用的上游源码锁定提交为：
+
+```text
+7fe583d96eabe34efdc2f764a6f413a56e687eca
+```
+
+---
+
 ## 编译固件步骤
 
 1. 先把本仓库Fork到你自己账号下
@@ -124,15 +202,15 @@
 | 3 | https://pumpkinmc.org/ | 我的世界服务端，运行速度非常快，占用内存小| openwrt需要自行编译版本 |
 ---
 
-### 已禁用的内核调试信息
+### 内核调试信息说明
 
-减少固件体积约50-100MB：
+普通调试功能仍然关闭以减少固件体积，但 daed 版本必须保留 BTF 所需的调试信息：
 
 | 配置项 | 说明 | 状态 |
 |-------|------|------|
 | CONFIG_KERNEL_DEBUG_FS | 调试文件系统 | 禁用 太占内存 |
 | CONFIG_KERNEL_DEBUG_KERNEL | 内核调试日志 | 禁用 太占内存 |
-| CONFIG_KERNEL_DEBUG_INFO | 完整调试符号 | 禁用 太占内存 |
+| CONFIG_KERNEL_DEBUG_INFO | BTF 生成所需的调试信息 | daed 版本启用 |
 | CONFIG_KERNEL_KALLSYMS | 内核符号表 | 禁用 太占内存 |
 
 ---

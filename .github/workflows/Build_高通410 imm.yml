@@ -212,9 +212,10 @@ jobs:
         fi
 
         # 过滤掉特殊前缀，只处理真正的包名
-        # Keep the legacy Docker LuCI package out: it installs S25docker and
-        # races the standard dockerd/S99dockerd service. Dockerman is allowed.
-        PACKAGES=$(echo "$RAW" | sed 's/,/ /g' | tr ' ' '\n' | grep -v '^__ip__' | grep -v '^__hostname__' | grep -xv 'luci-app-docker' | tr '\n' ' ')
+        # Keep packages intentionally excluded from the SP970 image out of
+        # manual input as well. Exact matching keeps luci-app-dockerman valid.
+        EXCLUDED_PACKAGES='^(luci-app-docker|luci-app-openclash|luci-app-passwall|luci-i18n-passwall-zh-cn|xray-core|adguardhome|luci-app-adguardhome|ddns-go|ddns-scripts|ddns-scripts-services|microsocks)$'
+        PACKAGES=$(echo "$RAW" | sed 's/,/ /g' | tr ' ' '\n' | grep -v '^__ip__' | grep -v '^__hostname__' | grep -Ev "$EXCLUDED_PACKAGES" | tr '\n' ' ')
 
         # 检测是否选了 turboacc，如果选了则先执行安装脚本
         if echo "$PACKAGES" | grep -qw "luci-app-turboacc"; then
@@ -262,6 +263,12 @@ jobs:
          echo "::error::legacy luci-app-docker must not be selected"
          exit 1
        fi
+       for cfg in luci-app-openclash luci-app-passwall luci-i18n-passwall-zh-cn xray-core adguardhome luci-app-adguardhome ddns-go ddns-scripts ddns-scripts-services microsocks; do
+         if grep -q "^CONFIG_PACKAGE_${cfg}=y$" .config; then
+           echo "::error::excluded SP970 package selected: ${cfg}"
+           exit 1
+         fi
+       done
        test -x files/etc/uci-defaults/98-sp970-runtime
        test -x files/etc/init.d/sp970-swap
        test -x files/etc/hotplug.d/iface/30-frpc-recovery

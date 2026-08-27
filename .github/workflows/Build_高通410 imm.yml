@@ -251,6 +251,19 @@ jobs:
        cd openwrt
        make defconfig
 
+    - name: Validate streamlined package exclusions
+      if: ${{ github.event.inputs.profile == 'sp970v11' || github.event.inputs.profile == 'ufi001c' }}
+      run: |
+       set -eu
+       cd openwrt
+       for cfg in luci-app-openclash luci-app-passwall luci-i18n-passwall-zh-cn xray-core adguardhome luci-app-adguardhome ddns-go ddns-scripts ddns-scripts-services microsocks; do
+         if grep -q "^CONFIG_PACKAGE_${cfg}=y$" .config; then
+           echo "::error::excluded package selected: ${cfg}"
+           exit 1
+         fi
+       done
+       echo "Streamlined package exclusions validated"
+
     - name: Validate SP970 startup and swap defaults
       if: ${{ github.event.inputs.profile == 'sp970v11' }}
       run: |

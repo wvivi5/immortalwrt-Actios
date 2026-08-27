@@ -212,7 +212,9 @@ jobs:
         fi
 
         # 过滤掉特殊前缀，只处理真正的包名
-        PACKAGES=$(echo "$RAW" | sed 's/,/ /g' | tr ' ' '\n' | grep -v '^__ip__' | grep -v '^__hostname__' | tr '\n' ' ')
+        # Keep the legacy Docker LuCI package out: it installs S25docker and
+        # races the standard dockerd/S99dockerd service. Dockerman is allowed.
+        PACKAGES=$(echo "$RAW" | sed 's/,/ /g' | tr ' ' '\n' | grep -v '^__ip__' | grep -v '^__hostname__' | grep -xv 'luci-app-docker' | tr '\n' ' ')
 
         # 检测是否选了 turboacc，如果选了则先执行安装脚本
         if echo "$PACKAGES" | grep -qw "luci-app-turboacc"; then
@@ -247,7 +249,26 @@ jobs:
       run: |
        cd openwrt
        make defconfig
-       
+
+    - name: Validate SP970 startup and swap defaults
+      if: ${{ github.event.inputs.profile == 'sp970v11' }}
+      run: |
+       set -eu
+       cd openwrt
+       for cfg in containerd docker docker-compose dockerd luci-app-dockerman frpc zram-swap; do
+         grep -q "^CONFIG_PACKAGE_${cfg}=y$" .config || { echo "::error::missing CONFIG_PACKAGE_${cfg}"; exit 1; }
+       done
+       if grep -q '^CONFIG_PACKAGE_luci-app-docker=y$' .config; then
+         echo "::error::legacy luci-app-docker must not be selected"
+         exit 1
+       fi
+       test -x files/etc/uci-defaults/98-sp970-runtime
+       test -x files/etc/init.d/sp970-swap
+       test -x files/etc/hotplug.d/iface/30-frpc-recovery
+       grep -q "zram_size_mb='192'" files/etc/uci-defaults/98-sp970-runtime
+       grep -q 'SWAP_MB=320' files/etc/init.d/sp970-swap
+       echo "SP970 startup/swap configuration validated"
+
     - name: Download package
       id: package
       run: |
@@ -284,6 +305,29 @@ jobs:
         grep '^CONFIG_TARGET.*DEVICE.*=y' .config | sed -r 's/.*DEVICE_(.*)=y/\1/' > DEVICE_NAME
         [ -s DEVICE_NAME ] && echo "DEVICE_NAME=_$(cat DEVICE_NAME)" >> $GITHUB_ENV
         echo "FILE_DATE=_$(date +"%Y%m%d%H%M")" >> $GITHUB_ENV
+
+    - name: Validate final SP970 rootfs startup services
+      if: ${{ github.event.inputs.profile == 'sp970v11' && steps.compile.outputs.status == 'success' }}
+      run: |
+        set -eu
+        ROOTFS=""
+        for candidate in openwrt/build_dir/target-*/root-*; do
+          [ -d "$candidate/etc" ] || continue
+          if [ -x "$candidate/etc/init.d/dockerd" ]; then
+            ROOTFS="$candidate"
+            break
+          fi
+        done
+        [ -n "$ROOTFS" ] || { echo "::error::final SP970 rootfs staging directory not found"; exit 1; }
+        [ ! -e "$ROOTFS/etc/init.d/docker" ] || { echo "::error::legacy /etc/init.d/docker exists"; exit 1; }
+        [ -x "$ROOTFS/etc/init.d/dockerd" ] || { echo "::error::dockerd init missing"; exit 1; }
+        [ -e "$ROOTFS/etc/rc.d/S99dockerd" ] || { echo "::error::S99dockerd missing"; exit 1; }
+        [ -x "$ROOTFS/etc/init.d/frpc" ] || { echo "::error::frpc init missing"; exit 1; }
+        [ -e "$ROOTFS/etc/rc.d/S99frpc" ] || { echo "::error::S99frpc missing"; exit 1; }
+        [ -x "$ROOTFS/etc/init.d/sp970-swap" ] || { echo "::error::sp970-swap init missing"; exit 1; }
+        [ -x "$ROOTFS/etc/hotplug.d/iface/30-frpc-recovery" ] || { echo "::error::frpc network recovery missing"; exit 1; }
+        [ -x "$ROOTFS/usr/bin/frpc-watchdog.sh" ] || { echo "::error::frpc watchdog missing"; exit 1; }
+        echo "Final SP970 rootfs validated at $ROOTFS"
 
     - name: Get kernel version
       run: |

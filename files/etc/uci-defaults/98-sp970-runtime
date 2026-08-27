@@ -1,0 +1,27 @@
+#!/bin/sh
+# SP970 runtime defaults.
+# 192 MiB zram + 320 MiB disk swap = 512 MiB logical swap in total.
+# zram-swap reads these values from /etc/config/system.
+uci -q set system.@system[0].zram_size_mb='192'
+uci -q set system.@system[0].zram_comp_algo='lzo'
+uci -q set system.@system[0].zram_priority='100'
+uci commit system
+
+# uci-defaults runs after the normal boot sequence. Apply the configured zram
+# size immediately on first boot, then enable the disk fallback for this and
+# subsequent boots.
+/etc/init.d/zram restart >/dev/null 2>&1 || true
+/etc/init.d/sp970-swap enable >/dev/null 2>&1 || true
+/etc/init.d/sp970-swap start >/dev/null 2>&1 || true
+
+# One cheap periodic reconciliation is the final cold-boot safety net.  It
+# exits immediately while there is no default route, so it cannot hold boot.
+grep -Fq '/usr/bin/frpc-watchdog.sh' /etc/crontabs/root 2>/dev/null || \
+	echo '* * * * * /usr/bin/frpc-watchdog.sh' >> /etc/crontabs/root
+
+# Defensive upgrade guard: only standard dockerd may own dockerd startup.
+if [ -x /etc/init.d/docker ]; then
+	/etc/init.d/docker disable >/dev/null 2>&1 || true
+fi
+
+exit 0

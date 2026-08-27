@@ -1,0 +1,31 @@
+#!/bin/sh /etc/rc.common
+
+START=20
+STOP=90
+
+SWAPFILE=/swapfile
+SWAP_MB=320
+
+start() {
+	# zram is started by /etc/init.d/zram at START=15. This is the slower,
+	# low-priority fallback and is created only when the file is absent.
+	if ! grep -q "^$SWAPFILE " /proc/swaps 2>/dev/null; then
+		if [ ! -f "$SWAPFILE" ]; then
+			logger -t sp970-swap "creating ${SWAP_MB}MiB disk swap fallback"
+			# BusyBox dd is available in the base image; count is intentional.
+			dd if=/dev/zero of="$SWAPFILE" bs=1M count="$SWAP_MB" 2>/dev/null || {
+				rm -f "$SWAPFILE"
+				logger -t sp970-swap "failed to create $SWAPFILE"
+				return 1
+			}
+			chmod 600 "$SWAPFILE"
+			busybox mkswap "$SWAPFILE" >/dev/null 2>&1 || return 1
+		fi
+		busybox swapon -p 10 "$SWAPFILE" 2>/dev/null || \
+			logger -t sp970-swap "failed to activate $SWAPFILE"
+	fi
+}
+
+stop() {
+	grep -q "^$SWAPFILE " /proc/swaps 2>/dev/null && busybox swapoff "$SWAPFILE" || true
+}

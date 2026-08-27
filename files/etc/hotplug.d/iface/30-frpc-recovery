@@ -1,0 +1,36 @@
+#!/bin/sh
+# Reconcile frpc after the real upstream interface becomes usable.
+# Never block netifd: recovery runs in the background and procd remains the
+# primary supervisor (START=99 + respawn in the packaged frpc service).
+[ "$ACTION" = ifup ] || [ "$ACTION" = ifupdate ] || exit 0
+case "$INTERFACE" in
+	wan|wwan|wan6|modem) ;;
+	*) exit 0 ;;
+esac
+
+(
+	# Let netifd finish installing addresses/routes before checking frpc.
+	sleep 3
+	ip route 2>/dev/null | grep -q '^default ' || exit 0
+
+	# Read the configured endpoint instead of baking one device's VPS into the
+	# image. Both legacy INI-style and current TOML-style UCI names are accepted.
+	server_addr="$(uci -q get frpc.common.server_addr)"
+	[ -n "$server_addr" ] || server_addr="$(uci -q get frpc.common.serverAddr)"
+	server_port="$(uci -q get frpc.common.server_port)"
+	[ -n "$server_port" ] || server_port="$(uci -q get frpc.common.serverPort)"
+	[ -n "$server_addr" ] || exit 0
+	[ -n "$server_port" ] || exit 0
+	nc -z -w 3 "$server_addr" "$server_port" 2>/dev/null || exit 0
+
+	pidof frpc >/dev/null 2>&1 || {
+		logger -t frpc-recovery "upstream $INTERFACE ready; starting frpc"
+		/etc/init.d/frpc restart >/dev/null 2>&1 || true
+		exit 0
+	}
+	if ! netstat -nt 2>/dev/null | grep -F "$server_addr:$server_port" | grep -q ESTABLISHED; then
+		logger -t frpc-recovery "upstream $INTERFACE ready; reconnecting frpc"
+		/etc/init.d/frpc restart >/dev/null 2>&1 || true
+	fi
+) &
+exit 0

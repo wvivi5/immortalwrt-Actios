@@ -351,7 +351,12 @@ jobs:
 
     - name: Get kernel version
       run: |
-        KERNEL_VER=$(cat /mnt/openwrt/build_dir/target-*/linux-*/linux-*/.kernelversion 2>/dev/null | head -1 || echo "未知")
+        cd /mnt/openwrt
+        KERNEL_VER=$(make -s kernelversion 2>/dev/null | head -1 || true)
+        if [ -z "$KERNEL_VER" ]; then
+          KERNEL_VER=$(find build_dir -name .kernelversion -type f -print -quit 2>/dev/null | xargs -r cat || true)
+        fi
+        KERNEL_VER=${KERNEL_VER:-未知}
         echo "KERNEL_VER=$KERNEL_VER" >> $GITHUB_ENV
 
 
@@ -444,13 +449,24 @@ jobs:
           echo "| 默认用户 | root |"
           echo "| 默认密码 | 空 |"
           echo ""
+          echo "### 固件说明"
+          echo "- 架构：aarch64（高通 MSM8916 / msm89xx）"
+          echo "- 文件系统：EXT4 单分区镜像，适用于现有 fastboot 刷机方式"
+          if [ "$PROFILE" = "ufi001c" ] || [ "$PROFILE" = "sp970v11" ]; then
+            echo "- 本版本保留：MT7601 USB 无线网卡驱动及固件（kmod-mt7601u、mt7601u-firmware）"
+            echo "- 本版本移除：OpenClash、PassWall、Xray、AdGuardHome、DDNS-Go、DDNS 脚本、Microsocks"
+          fi
+          echo "- 刷机包内含 boot.img、system.img 及 Windows 刷机脚本"
+          echo ""
+          echo "### 额外添加的包（workflow 输入）"
           if [ -n "$EXTRA" ]; then
-            echo "### 额外添加的包"
             echo "$EXTRA" | sed 's/^/- /'
           else
-            echo "### 额外添加的包"
             echo "无"
           fi
+          echo ""
+          echo "### 刷机提示"
+          echo "解压刷机包后，设备进入 fastboot，按包内 .bat 脚本刷写；刷机前请确认机型并备份重要数据。"
         } >> release.txt
         echo "status=success" >> $GITHUB_OUTPUT
 
